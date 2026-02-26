@@ -180,7 +180,7 @@ function generateXMLTV(host) {
   return xml;
 }
 
-async function startBrowser() {
+async function startBrowser(retries = 5) {
   if (!WS4KP_URL) throw new Error('WS4KP_URL not initialized');
   if (browser) await browser.close().catch(() => {});
 
@@ -197,7 +197,21 @@ async function startBrowser() {
   });
 
   page = await browser.newPage();
-  await page.goto(WS4KP_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await page.goto(WS4KP_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      // Give the weather app a moment to initialize its UI
+      await waitFor(3000);
+      break;
+    } catch (err) {
+      console.error(`Navigation attempt ${attempt}/${retries} failed: ${err.message}`);
+      if (attempt === retries) throw err;
+      const delay = attempt * 5000;
+      console.log(`Retrying in ${delay / 1000}s...`);
+      await waitFor(delay);
+    }
+  }
 
   // Only use Puppeteer search if location wasn't set via URL params
   if (!WS4KP_LOCATION && !WS4KP_LAT_LON) {
