@@ -35,6 +35,7 @@ const SETTINGS_MAP = {
   WS4KP_SPEED: 'settings-speed-select',
   WS4KP_MARINE_WIND_UNITS: 'settings-marineWindUnits-select',
   WS4KP_MARINE_WAVE_HEIGHT: 'settings-marineWaveHeightUnits-select',
+  WS4KP_MARINE_FORECAST: 'marine-forecast-checkbox',
 };
 
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -186,6 +187,7 @@ async function startBrowser(retries = 5) {
 
   browser = await puppeteer.launch({
     headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
