@@ -20,6 +20,8 @@ const chnlNum = process.env.CHANNEL_NUMBER || '275';
 // ws4kp-international settings -> URL query parameters
 const WS4KP_LOCATION = process.env.WS4KP_LOCATION || '';
 const WS4KP_LAT_LON = process.env.WS4KP_LAT_LON || '';
+const WS4KP_KIOSK = process.env.WS4KP_KIOSK === 'true';
+const WS4KP_WIDE = process.env.WS4KP_WIDE === 'true';
 
 const SETTINGS_MAP = {
   WS4KP_KIOSK: 'kiosk',
@@ -289,8 +291,10 @@ async function startTranscoding() {
         captureInterval = setInterval(arguments.callee, 1000 / FRAME_RATE);
         return;
       }
-      const clipRegion = (WS4KP_LOCATION || WS4KP_LAT_LON)
+      const clipRegion = (WS4KP_KIOSK && WS4KP_WIDE)
         ? { x: 0, y: 0, width: 1280, height: 720 }
+        : (WS4KP_KIOSK)
+        ? { x: 0, y: 0, width: 631, height: 480 }
         : { x: 4, y: 47, width: 631, height: 480 };
       const screenshot = await page.screenshot({
         type: 'jpeg',
