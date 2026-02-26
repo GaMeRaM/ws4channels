@@ -1,7 +1,12 @@
-FROM node:18
+FROM oven/bun:1-debian AS deps
+WORKDIR /app
+COPY package.json ./
+RUN bun install
+
+FROM node:18-slim
 
 # Install FFmpeg and Puppeteer dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
 ffmpeg \
 libnss3 \
 libatk1.0-0 \
@@ -17,16 +22,9 @@ libasound2 \
 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
-
-# Copy application code, music, and logo files
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN mkdir -p /app/music /app/logo
-COPY music/*.mp3 /app/music/
-COPY logo/*.png /app/logo/
 
-# Use STREAM_PORT environment variable for dynamic port
 EXPOSE $STREAM_PORT
 CMD ["node", "index.js"]
-
