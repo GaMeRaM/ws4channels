@@ -289,9 +289,12 @@ async function startTranscoding() {
         captureInterval = setInterval(arguments.callee, 1000 / FRAME_RATE);
         return;
       }
+      const clipRegion = (WS4KP_LOCATION || WS4KP_LAT_LON)
+        ? { x: 0, y: 0, width: 1280, height: 720 }
+        : { x: 4, y: 47, width: 631, height: 480 };
       const screenshot = await page.screenshot({
         type: 'jpeg',
-        clip: { x: 4, y: 47, width: 631, height: 480 }
+        clip: clipRegion
       });
       ffmpegStream.write(screenshot);
     } catch (err) {
