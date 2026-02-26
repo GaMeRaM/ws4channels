@@ -12,10 +12,30 @@ const ZIP_CODE = process.env.ZIP_CODE || '90210';
 const WS4KP_HOST = process.env.WS4KP_HOST || 'localhost';
 const WS4KP_PORT = process.env.WS4KP_PORT || '8080';
 const STREAM_PORT = process.env.STREAM_PORT || '9798';
-const WS4KP_URL = `http://${WS4KP_HOST}:${WS4KP_PORT}`;
+let WS4KP_URL;
 const HLS_SETUP_DELAY = 2000;
 const FRAME_RATE = process.env.FRAME_RATE || 10;
 const chnlNum = process.env.CHANNEL_NUMBER || '275';
+
+// ws4kp-international settings -> URL query parameters
+const WS4KP_LOCATION = process.env.WS4KP_LOCATION || '';
+const WS4KP_LAT_LON = process.env.WS4KP_LAT_LON || '';
+
+const SETTINGS_MAP = {
+  WS4KP_KIOSK: 'kiosk',
+  WS4KP_WIDE: 'settings-wide-checkbox',
+  WS4KP_SCAN_LINES: 'settings-scanLines-checkbox',
+  WS4KP_HIDE_WEBAMP: 'settings-hideWebamp-checkbox',
+  WS4KP_EXPERIMENTAL: 'settings-experimentalFeatures-checkbox',
+  WS4KP_TEMPERATURE_UNITS: 'settings-temperatureUnits-select',
+  WS4KP_WIND_UNITS: 'settings-windUnits-select',
+  WS4KP_DISTANCE_UNITS: 'settings-distanceUnits-select',
+  WS4KP_PRESSURE_UNITS: 'settings-pressureUnits-select',
+  WS4KP_HOURS_FORMAT: 'settings-hoursFormat-select',
+  WS4KP_SPEED: 'settings-speed-select',
+  WS4KP_MARINE_WIND_UNITS: 'settings-marineWindUnits-select',
+  WS4KP_MARINE_WAVE_HEIGHT: 'settings-marineWaveHeightUnits-select',
+};
 
 const OUTPUT_DIR = path.join(__dirname, 'output');
 const AUDIO_DIR = path.join(__dirname, 'music');
@@ -38,6 +58,42 @@ let captureInterval = null;
 let isStreamReady = false;
 
 const waitFor = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function geocodeLocation(name) {
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`Geocoding API returned ${res.status}: ${res.statusText}`);
+  const data = await res.json();
+  if (!data.results?.length) throw new Error(`Geocoding failed for "${name}"`);
+  const { latitude, longitude } = data.results[0];
+  return { lat: parseFloat(latitude.toFixed(4)), lon: parseFloat(longitude.toFixed(4)) };
+}
+
+async function buildWs4kpUrl() {
+  const params = new URLSearchParams();
+
+  // Location: lat/lon takes priority, then geocode from location name
+  let latLon = WS4KP_LAT_LON;
+  if (WS4KP_LOCATION) {
+    params.set('latLonQuery', WS4KP_LOCATION);
+    if (!latLon) {
+      console.log(`Geocoding "${WS4KP_LOCATION}"...`);
+      const coords = await geocodeLocation(WS4KP_LOCATION);
+      latLon = JSON.stringify(coords);
+      console.log(`Resolved to ${latLon}`);
+    }
+  }
+  if (latLon) params.set('latLon', latLon);
+
+  // Map all settings env vars
+  for (const [envKey, paramName] of Object.entries(SETTINGS_MAP)) {
+    const value = process.env[envKey];
+    if (value != null && value !== '') params.set(paramName, value);
+  }
+
+  const qs = params.toString();
+  return `http://${WS4KP_HOST}:${WS4KP_PORT}${qs ? '?' + qs : ''}`;
+}
 
 function getContainerLimits() {
   let cpuQuotaPath = '/sys/fs/cgroup/cpu.max';
@@ -125,6 +181,7 @@ function generateXMLTV(host) {
 }
 
 async function startBrowser() {
+  if (!WS4KP_URL) throw new Error('WS4KP_URL not initialized');
   if (browser) await browser.close().catch(() => {});
 
   browser = await puppeteer.launch({
@@ -142,19 +199,22 @@ async function startBrowser() {
   page = await browser.newPage();
   await page.goto(WS4KP_URL, { waitUntil: 'networkidle2', timeout: 30000 });
 
-  try {
-    const zipInput = await page.waitForSelector('input[placeholder="Zip or City, State"], input', { timeout: 5000 });
-    if (zipInput) {
-      await zipInput.type(ZIP_CODE, { delay: 100 });
-      await waitFor(1000);
-      await page.keyboard.press('ArrowDown');
-      await waitFor(500);
-      const goButton = await page.$('button[type="submit"]');
-      if (goButton) await goButton.click();
-      else await zipInput.press('Enter');
-      await page.waitForSelector('div.weather-display, #weather-content', { timeout: 30000 });
-    }
-  } catch {}
+  // Only use Puppeteer search if location wasn't set via URL params
+  if (!WS4KP_LOCATION && !WS4KP_LAT_LON) {
+    try {
+      const zipInput = await page.waitForSelector('input[placeholder="Zip or City, State"], input', { timeout: 5000 });
+      if (zipInput) {
+        await zipInput.type(ZIP_CODE, { delay: 100 });
+        await waitFor(1000);
+        await page.keyboard.press('ArrowDown');
+        await waitFor(500);
+        const goButton = await page.$('button[type="submit"]');
+        if (goButton) await goButton.click();
+        else await zipInput.press('Enter');
+        await page.waitForSelector('div.weather-display, #weather-content', { timeout: 30000 });
+      }
+    } catch {}
+  }
 
   await page.setViewport({ width: 1280, height: 720 });
 }
@@ -265,8 +325,15 @@ const { cpus, memoryMB } = getContainerLimits();
 console.log(`Running with ${cpus} CPU cores, ${memoryMB}MB RAM`);
 
 app.listen(STREAM_PORT, async () => {
-  console.log(`Streaming server running on port ${STREAM_PORT}`);
-  await startTranscoding();
+  try {
+    console.log(`Streaming server running on port ${STREAM_PORT}`);
+    WS4KP_URL = await buildWs4kpUrl();
+    console.log(`WS4KP URL: ${WS4KP_URL}`);
+    await startTranscoding();
+  } catch (err) {
+    console.error('Fatal startup error:', err.message);
+    process.exit(1);
+  }
 });
 
 process.on('SIGINT', async () => {
